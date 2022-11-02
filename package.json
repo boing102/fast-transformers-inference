@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "aws4": "^1.11.0",
+    "js-aws-sigv4": "^0.2.20"
+  }
+}
