@@ -42,3 +42,79 @@ triton_image_uri = "{account_id}.dkr.ecr.{region}.{base}/sagemaker-tritonserver:
 triton_image_uri
 
 model_uri = sagemaker_session.upload_data(path="model.tar.gz", key_prefix="triton-serve-trt")
+
+sm_model_name = "triton-all-mpnet-base-v2-" + time.strftime("%Y-%m-%d-%H-%M-%S", time.gmtime())
+
+container = {
+    "Image": triton_image_uri,
+    "ModelDataUrl": model_uri,
+    "Environment": {"SAGEMAKER_TRITON_DEFAULT_MODEL_NAME": "all-mpnet-base-v2_tensorrt_inference"},
+}
+
+create_model_response = sm.create_model(
+    ModelName=sm_model_name, ExecutionRoleArn=role, PrimaryContainer=container
+)
+
+print("Model Arn: " + create_model_response["ModelArn"])
+
+endpoint_config_name = "triton-all-mpnet-base-v2-" + time.strftime("%Y-%m-%d-%H-%M-%S", time.gmtime())
+
+create_endpoint_config_response = sm.create_endpoint_config(
+    EndpointConfigName=endpoint_config_name,
+    ProductionVariants=[
+        {
+#             "InstanceType": "ml.g4dn.2xlarge",
+            "InstanceType": "ml.p3.2xlarge",
+            "InitialVariantWeight": 1,
+            "InitialInstanceCount": 1,
+            "ModelName": sm_model_name,
+            "VariantName": "AllTraffic",
+        }
+    ],
+)
+
+print("Endpoint Config Arn: " + create_endpoint_config_response["EndpointConfigArn"])
+
+endpoint_name = "triton-all-mpnet-base-v2-" + time.strftime("%Y-%m-%d-%H-%M-%S", time.gmtime())
+
+create_endpoint_response = sm.create_endpoint(
+    EndpointName=endpoint_name, EndpointConfigName=endpoint_config_name
+)
+
+print("Endpoint Arn: " + create_endpoint_response["EndpointArn"])
+
+resp = sm.describe_endpoint(EndpointName=endpoint_name)
+status = resp["EndpointStatus"]
+print("Status: " + status)
+
+while status == "Creating":
+    time.sleep(60)
+    resp = sm.describe_endpoint(EndpointName=endpoint_name)
+    status = resp["EndpointStatus"]
+    print("Status: " + status)
+
+print("Arn: " + resp["EndpointArn"])
+print("Status: " + status)
+
+
+import tritonclient.http as httpclient
+import numpy as np
+
+inputs = []
+outputs = []
+inputs.append(httpclient.InferInput("TEXT", [1], "BYTES"))
+
+inputs[0].set_data_from_numpy(np.array(["simple simple".encode("UTF-8")]), binary_data=True)
+
+outputs.append(httpclient.InferRequestedOutput("output", binary_data=False))
+request_body, header_length = httpclient.InferenceServerClient.generate_request_body(
+    inputs, outputs=outputs
+)
+response = client.invoke_endpoint(
+    EndpointName=endpoint_name,
+    ContentType="application/vnd.sagemaker-triton.binary+json;json-header-size={}".format(
+        header_length
+    ),
+    Body=request_body,
+)
+json.loads(response["Body"].read())
